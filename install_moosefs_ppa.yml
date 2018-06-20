@@ -1,0 +1,202 @@
+## Warning, this could be very destructive, as it attempts to install a new filesystem MooseFS. Use only after discussion with 
+## Colin and never use with HPCALL inventory
+
+- hosts: MOOSEFS
+  remote_user: rcug
+  become: yes
+
+  tasks:
+
+  - name: Add downloaded moosefs repo gpg key
+    apt_key:
+         file: /working/rcug/slurm/moosefs/moosefs.key
+         state: present
+
+  - name: Add moosefs repo 
+    apt_repository: 
+         repo: deb http://ppa.moosefs.com/moosefs-3/apt/ubuntu/xenial xenial main
+         state: present
+
+  - name: Update APT cache
+    apt: 
+         update_cache: yes
+         cache_valid_time: 3600
+         allow_unauthenticated: yes
+
+############
+## Master
+############
+
+  - name: Master Install moosefs-master on hpc06 and hpc-vm2
+    apt: pkg={{ item }} state='latest' install_recommends=no allow_unauthenticated=yes
+    with_items:
+      - moosefs-master
+      - moosefs-cgi 
+      - moosefs-cgiserv
+      - moosefs-cli
+      - moosefs-cgi
+      - moosefs-cgiserv
+    when: ansible_hostname == "hpc06" or ansible_hostname == "hpc-vm2"
+
+  - name: Setup moosefs permissions and folder 1
+    file: path={{ item }} state=directory owner=mfs group=mfs
+    with_items:
+      - /etc/mfs/   
+    when: ansible_hostname == "hpc06" or ansible_hostname == "hpc-vm2"
+
+  - name: Master Copy the sample mfsmaster file
+    ignore_errors: True
+    copy:
+        src: /etc/mfs/mfsmaster.cfg.sample 
+        dest: /etc/mfs/mfsmaster.cfg
+    when: ansible_hostname == "hpc06" or ansible_hostname == "hpc-vm2"
+
+  - name: Master Copy the sample mfsexports file                                         
+    ignore_errors: True
+    copy:
+        src: /etc/mfs/mfsexports.cfg.sample
+        dest: /etc/mfs/mfsexports.cfg 
+    when: ansible_hostname == "hpc06" or ansible_hostname == "hpc-vm2"
+
+  - name: Master Copy the metadata file
+    ignore_errors: True
+    copy:
+        src: /var/lib/mfs/metadata.mfs.empty
+        dest: /var/lib/mfs/metadata.mfs
+    when: ansible_hostname == "hpc06" or ansible_hostname == "hpc-vm2"
+
+  - name: Setup moosefs permissions and folder
+    file: path={{ item }} state=file owner=mfs group=mfs
+    with_items:
+      - /var/lib/mfs/metadata.mfs
+    when: ansible_hostname == "hpc06" or ansible_hostname == "hpc-vm2"
+
+  - name: Delete /var/lib/mfs/metadata.mfs.empty
+    file: path={{ item }} state=absent
+    with_items:
+      - /var/lib/mfs/metadata.mfs.empty
+    when: ansible_hostname == "hpc06"  or ansible_hostname == "hpc-vm2"
+
+  - name: Start moosefs master
+    shell: mfsmaster restart
+    when: ansible_hostname == "hpc06" or ansible_hostname == "hpc-vm2"
+
+  - name: Start moosefs web
+    shell: mfscgiserv restart
+    when: ansible_hostname == "hpc06" or ansible_hostname == "hpc-vm2"
+
+
+
+
+####################
+#### Chunkservers
+####################
+
+  - name: Chunkservers Install moosefs-chunkservers 
+    apt: pkg={{ item }} state='latest' install_recommends=no allow_unauthenticated=yes
+    with_items:
+      - moosefs-chunkserver
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+
+  - name: Chunkservers Setup data partitions
+    become: yes
+    ignore_errors: True
+    file: path={{ item }} state=directory owner=mfs group=mfs mode=0770
+    with_items:
+        - /data/moosefs
+        - /ssd/moosefs
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+
+  - name: Chunkservers Copy the sample mfschunkserver file
+    become: yes
+    ignore_errors: True
+    copy:
+        src: /etc/mfs/mfschunkserver.cfg.sample  
+        dest: /etc/mfs/mfschunkserver.cfg
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+  - name: Chunkservers Copy the sample mfshdd file
+    become: yes
+    ignore_errors: True
+    copy:
+        src: /etc/mfs/mfshdd.cfg.sample
+        dest: /etc/mfs/mfshdd.cfg       
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+
+  - name: Change line in file to add partition /data
+    become: yes
+    lineinfile:
+        path: /etc/mfs/mfshdd.cfg
+        state: present  
+        line: "/data/moosefs"
+        backup: yes
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+  - name: Change line in file to add partition /ssd
+    become: yes
+    lineinfile:
+        path: /etc/mfs/mfshdd.cfg    
+        state: present
+        line: "/ssd/moosefs"
+        backup: yes
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+  - name: Start chunkservers
+    shell: mfschunkserver restart
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+
+
+
+###################
+## MooseFS clients - mounts
+##################
+
+
+  - name: Clientservers Install moosefs-client and fuse
+    apt: pkg={{ item }} state='latest' install_recommends=no allow_unauthenticated=yes
+    with_items:
+      - moosefs-client
+      - fuse
+      - libfuse2
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+  - name: Mount moosefs
+    mount:
+      fstype: moosefs
+      opts: defaults,mfsdelayedinit 0 0
+      path: /mnt/mfs
+      src: "172.24.8.26:"
+      state: mounted
+    when: ansible_hostname != "hpc06" and ansible_hostname != "hpc-vm2"
+
+
+
+##############
+# Metalogger on hpc05
+##############
+
+
+  - name: Install moosefs-metalogger
+    apt: pkg={{ item }} state='latest' install_recommends=no allow_unauthenticated=yes
+    with_items:
+      - moosefs-metalogger
+    when: ansible_hostname == "hpc05"
+
+  - name: Start metalogger
+    shell: mfsmetalogger start
+    when: ansible_hostname == "hpc05"
+
+
+  - name: Metalogger Copy the sample mfshdd file
+    become: yes
+    ignore_errors: True
+    copy:
+        src: /etc/mfs/mfsmetalogger.cfg.sample
+        dest: /etc/mfs/mfsmetalogger.cfg
+    when: ansible_hostname == "hpc05"
+
+

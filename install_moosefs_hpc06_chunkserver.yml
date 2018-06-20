@@ -1,0 +1,90 @@
+## Warning, this could be very destructive, as it attempts to install a new filesystem MooseFS. Use only after discussion with 
+## Colin and never use with HPCALL inventory
+## This is a trial of using a powerful master server with /ssd and /data as a chunkserver concurrently
+
+- hosts: MOOSEFS
+  remote_user: rcug
+  become: yes
+
+  tasks:
+
+  - name: Add downloaded moosefs repo gpg key
+    apt_key:
+         file: /working/rcug/slurm/moosefs/moosefs.key
+         state: present
+
+  - name: Add moosefs repo 
+    apt_repository: 
+         repo: deb http://ppa.moosefs.com/moosefs-3/apt/ubuntu/xenial xenial main
+         state: present
+
+  - name: Update APT cache
+    apt: 
+         update_cache: yes
+         cache_valid_time: 3600
+         allow_unauthenticated: yes
+
+
+####################
+#### Chunkservers
+####################
+
+  - name: Chunkservers Install moosefs-chunkservers 
+    apt: pkg={{ item }} state='latest' install_recommends=no allow_unauthenticated=yes
+    with_items:
+      - moosefs-chunkserver
+    when: ansible_hostname == "hpc06"
+
+
+  - name: Chunkservers Setup data partitions
+    become: yes
+    ignore_errors: True
+    file: path={{ item }} state=directory owner=mfs group=mfs mode=0770
+    with_items:
+        - /data/moosefs
+        - /ssd/moosefs
+    when: ansible_hostname == "hpc06"                                  
+
+
+  - name: Chunkservers Copy the sample mfschunkserver file
+    become: yes
+    ignore_errors: True
+    copy:
+        src: /etc/mfs/mfschunkserver.cfg.sample  
+        dest: /etc/mfs/mfschunkserver.cfg
+    when: ansible_hostname == "hpc06"                                  
+
+  - name: Chunkservers Copy the sample mfshdd file
+    become: yes
+    ignore_errors: True
+    copy:
+        src: /etc/mfs/mfshdd.cfg.sample
+        dest: /etc/mfs/mfshdd.cfg       
+    when: ansible_hostname == "hpc06"                                  
+
+
+  - name: Change line in file to add partition /data
+    become: yes
+    lineinfile:
+        path: /etc/mfs/mfshdd.cfg
+        state: present  
+        line: "/data/moosefs"
+        backup: yes
+    when: ansible_hostname == "hpc06"                                  
+
+  - name: Change line in file to add partition /ssd
+    become: yes
+    lineinfile:
+        path: /etc/mfs/mfshdd.cfg    
+        state: present
+        line: "/ssd/moosefs"
+        backup: yes
+    when: ansible_hostname == "hpc06"                                  
+
+  - name: Start chunkservers
+    shell: mfschunkserver restart
+    when: ansible_hostname == "hpc06"                                  
+
+
+
+
